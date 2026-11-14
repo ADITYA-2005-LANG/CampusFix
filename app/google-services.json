@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "923752694167",
+    "project_id": "campusfix-4c0c1",
+    "storage_bucket": "campusfix-4c0c1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:923752694167:android:81d6e384d27277a29f84d2",
+        "android_client_info": {
+          "package_name": "com.example.campusfix"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "923752694167-0sepookvuftfnu9t8us4e12nt4eepcfr.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBmzu8uNbXfNCrmki7924TYWmxo3mUsOco"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "923752694167-0sepookvuftfnu9t8us4e12nt4eepcfr.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
