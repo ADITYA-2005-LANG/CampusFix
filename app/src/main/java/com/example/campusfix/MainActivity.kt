@@ -2,6 +2,7 @@ package com.example.campusfix
 
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -13,8 +14,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,9 +28,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.storage.FirebaseStorage
 import java.text.SimpleDateFormat
 import java.util.*
@@ -44,7 +48,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Data model enhanced with Image, Upvotes ("Me Too"), and History Log
+// Data model for Campus Issues
 data class Issue(
     val id: String = "",
     val userId: String = "",
@@ -72,7 +76,7 @@ fun CampusFixApp() {
     var currentUser by remember { mutableStateOf(auth.currentUser) }
     var userRole by remember { mutableStateOf<String?>(null) }
     var isProfileComplete by remember { mutableStateOf(true) }
-    var isCheckingData by remember { mutableStateOf(false) }
+    var isCheckingData by remember { mutableStateOf(auth.currentUser != null) }
 
     LaunchedEffect(currentUser) {
         if (currentUser != null) {
@@ -83,21 +87,20 @@ fun CampusFixApp() {
                     val fullName = doc.getString("fullName") ?: ""
                     val rollNum = doc.getString("rollNumber") ?: ""
                     val course = doc.getString("course") ?: ""
+                    val hostel = doc.getString("hostel") ?: ""
+                    val roomNo = doc.getString("roomNo") ?: ""
+                    val isCompleteFlag = doc.getBoolean("profileCompleted") ?: false
 
-                    isProfileComplete = if (userRole == "Admin") {
-                        true
-                    } else {
-                        fullName.isNotBlank() && rollNum.isNotBlank() && course.isNotBlank()
-                    }
+                    isProfileComplete = userRole == "Admin" || isCompleteFlag || (fullName.isNotBlank() && rollNum.isNotBlank() && (hostel.isNotBlank() || course.isNotBlank() || roomNo.isNotBlank()))
                     isCheckingData = false
                 }
                 .addOnFailureListener {
                     userRole = "Student"
-                    isProfileComplete = false
                     isCheckingData = false
                 }
         } else {
             userRole = null
+            isCheckingData = false
         }
     }
 
@@ -114,11 +117,15 @@ fun CampusFixApp() {
                 ProfileSetupScreen(
                     currentUser = currentUser!!,
                     firestore = firestore,
-                    onProfileSaved = { isProfileComplete = true }
+                    onProfileSaved = { isProfileComplete = true },
+                    onBack = {
+                        auth.signOut()
+                        currentUser = null
+                        userRole = null
+                    }
                 )
             } else if (userRole == "Admin") {
                 AdminDashboard(
-                    auth = auth,
                     onLogout = {
                         auth.signOut()
                         currentUser = null
@@ -151,7 +158,8 @@ fun CampusFixApp() {
 fun ProfileSetupScreen(
     currentUser: FirebaseUser,
     firestore: FirebaseFirestore,
-    onProfileSaved: () -> Unit
+    onProfileSaved: () -> Unit,
+    onBack: () -> Unit
 ) {
     var fullName by remember { mutableStateOf("") }
     var rollNumber by remember { mutableStateOf("") }
@@ -174,94 +182,133 @@ fun ProfileSetupScreen(
     val genderOptions = listOf("Male", "Female")
     val hostelOptions = if (gender == "Male") listOf("BH1", "BH2", "OH1", "OH2") else listOf("GH1", "GH2", "GH3", "GH4", "GH5")
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color(0xFF176B55))
-        Spacer(modifier = Modifier.height(12.dp))
-        Text("Complete Your Profile", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color(0xFF176B55))
-        Spacer(modifier = Modifier.height(4.dp))
-        Text("Please provide your campus details to continue.", color = Color.Gray)
-        Spacer(modifier = Modifier.height(24.dp))
-
-        OutlinedTextField(value = fullName, onValueChange = { fullName = it; errorMessage = "" }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedTextField(value = rollNumber, onValueChange = { rollNumber = it; errorMessage = "" }, label = { Text("Roll Number / Student ID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Spacer(modifier = Modifier.height(12.dp))
-
-        ExposedDropdownMenuBox(expanded = courseExpanded, onExpandedChange = { courseExpanded = !courseExpanded }, modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(value = course, onValueChange = {}, readOnly = true, label = { Text("Course") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = courseExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-            ExposedDropdownMenu(expanded = courseExpanded, onDismissRequest = { courseExpanded = false }) {
-                courseOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { course = option; courseExpanded = false }) }
+    LaunchedEffect(currentUser.uid) {
+        firestore.collection("Users").document(currentUser.uid).get()
+            .addOnSuccessListener { doc ->
+                doc.getString("fullName")?.takeIf { it.isNotBlank() }?.let { fullName = it }
+                doc.getString("rollNumber")?.takeIf { it.isNotBlank() }?.let { rollNumber = it }
+                doc.getString("course")?.takeIf { it.isNotBlank() }?.let { course = it }
+                doc.getString("department")?.takeIf { it.isNotBlank() }?.let { department = it }
+                doc.getString("gender")?.takeIf { it.isNotBlank() }?.let { gender = it }
+                doc.getString("hostel")?.takeIf { it.isNotBlank() }?.let { hostel = it }
+                doc.getString("roomNo")?.takeIf { it.isNotBlank() }?.let { roomNo = it }
             }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
+    }
 
-        ExposedDropdownMenuBox(expanded = deptExpanded, onExpandedChange = { deptExpanded = !deptExpanded }, modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(value = department, onValueChange = {}, readOnly = true, label = { Text("Department") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deptExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-            ExposedDropdownMenu(expanded = deptExpanded, onDismissRequest = { deptExpanded = false }) {
-                deptOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { department = option; deptExpanded = false }) }
-            }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-
-        ExposedDropdownMenuBox(expanded = genderExpanded, onExpandedChange = { genderExpanded = !genderExpanded }, modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(value = gender, onValueChange = {}, readOnly = true, label = { Text("Gender") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = genderExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-            ExposedDropdownMenu(expanded = genderExpanded, onDismissRequest = { genderExpanded = false }) {
-                genderOptions.forEach { option ->
-                    DropdownMenuItem(text = { Text(option) }, onClick = {
-                        gender = option; genderExpanded = false
-                        if (gender == "Male" && !listOf("BH1", "BH2", "OH1", "OH2").contains(hostel)) hostel = ""
-                        else if (gender == "Female" && !listOf("GH1", "GH2", "GH3", "GH4", "GH5").contains(hostel)) hostel = ""
-                    })
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Profile Setup") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Login")
+                    }
                 }
-            }
+            )
         }
-        Spacer(modifier = Modifier.height(12.dp))
-
-        ExposedDropdownMenuBox(expanded = hostelExpanded, onExpandedChange = { hostelExpanded = !hostelExpanded }, modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(value = hostel, onValueChange = {}, readOnly = true, label = { Text("Hostel") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = hostelExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-            ExposedDropdownMenu(expanded = hostelExpanded, onDismissRequest = { hostelExpanded = false }) {
-                hostelOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { hostel = option; hostelExpanded = false }) }
-            }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = roomNo,
-            onValueChange = { input -> if (input.all { it.isDigit() }) roomNo = input },
-            label = { Text("Room No. (Numbers only)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (errorMessage.isNotEmpty()) {
-            Text(text = errorMessage, color = MaterialTheme.colorScheme.error)
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
-        Button(
-            onClick = {
-                if (fullName.isBlank() || rollNumber.isBlank() || hostel.isBlank() || roomNo.isBlank()) {
-                    errorMessage = "Please fill in all required profile fields."
-                    return@Button
-                }
-                isSaving = true
-                val updates = mapOf("fullName" to fullName.trim(), "rollNumber" to rollNumber.trim(), "course" to course, "department" to department, "gender" to gender, "hostel" to hostel, "roomNo" to roomNo.trim())
-                firestore.collection("Users").document(currentUser.uid).update(updates)
-                    .addOnSuccessListener { isSaving = false; onProfileSaved() }
-                    .addOnFailureListener { e -> isSaving = false; errorMessage = "Failed: ${e.message}" }
-            },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            enabled = !isSaving,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF176B55))
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
-            else Text("Save and Continue")
+            Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color(0xFF176B55))
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Complete Your Profile", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color(0xFF176B55))
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Please provide your campus details to continue.", color = Color.Gray)
+            Spacer(modifier = Modifier.height(24.dp))
+
+            OutlinedTextField(value = fullName, onValueChange = { fullName = it; errorMessage = "" }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(value = rollNumber, onValueChange = { rollNumber = it; errorMessage = "" }, label = { Text("Roll Number / Student ID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ExposedDropdownMenuBox(expanded = courseExpanded, onExpandedChange = { courseExpanded = !courseExpanded }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = course, onValueChange = {}, readOnly = true, label = { Text("Course") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = courseExpanded) }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
+                ExposedDropdownMenu(expanded = courseExpanded, onDismissRequest = { courseExpanded = false }) {
+                    courseOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { course = option; courseExpanded = false }) }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ExposedDropdownMenuBox(expanded = deptExpanded, onExpandedChange = { deptExpanded = !deptExpanded }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = department, onValueChange = {}, readOnly = true, label = { Text("Department") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deptExpanded) }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
+                ExposedDropdownMenu(expanded = deptExpanded, onDismissRequest = { deptExpanded = false }) {
+                    deptOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { department = option; deptExpanded = false }) }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ExposedDropdownMenuBox(expanded = genderExpanded, onExpandedChange = { genderExpanded = !genderExpanded }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = gender, onValueChange = {}, readOnly = true, label = { Text("Gender") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = genderExpanded) }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
+                ExposedDropdownMenu(expanded = genderExpanded, onDismissRequest = { genderExpanded = false }) {
+                    genderOptions.forEach { option ->
+                        DropdownMenuItem(text = { Text(option) }, onClick = {
+                            gender = option; genderExpanded = false
+                            if (gender == "Male" && !listOf("BH1", "BH2", "OH1", "OH2").contains(hostel)) hostel = ""
+                            else if (gender == "Female" && !listOf("GH1", "GH2", "GH3", "GH4", "GH5").contains(hostel)) hostel = ""
+                        })
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ExposedDropdownMenuBox(expanded = hostelExpanded, onExpandedChange = { hostelExpanded = !hostelExpanded }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = hostel, onValueChange = {}, readOnly = true, label = { Text("Hostel") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = hostelExpanded) }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
+                ExposedDropdownMenu(expanded = hostelExpanded, onDismissRequest = { hostelExpanded = false }) {
+                    hostelOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { hostel = option; hostelExpanded = false }) }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = roomNo,
+                onValueChange = { input -> if (input.all { it.isDigit() }) roomNo = input },
+                label = { Text("Room No. (Numbers only)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (errorMessage.isNotEmpty()) {
+                Text(text = errorMessage, color = MaterialTheme.colorScheme.error)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            Button(
+                onClick = {
+                    if (fullName.isBlank() || rollNumber.isBlank() || hostel.isBlank() || roomNo.isBlank()) {
+                        errorMessage = "Please fill in all required profile fields."
+                        return@Button
+                    }
+                    isSaving = true
+                    val updates = mapOf(
+                        "fullName" to fullName.trim(),
+                        "rollNumber" to rollNumber.trim(),
+                        "course" to course,
+                        "department" to department,
+                        "gender" to gender,
+                        "hostel" to hostel,
+                        "roomNo" to roomNo.trim(),
+                        "profileCompleted" to true
+                    )
+                    firestore.collection("Users").document(currentUser.uid).set(updates, SetOptions.merge())
+                        .addOnSuccessListener { isSaving = false; onProfileSaved() }
+                        .addOnFailureListener { e -> isSaving = false; errorMessage = "Failed: ${e.message}" }
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled = !isSaving,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF176B55))
+            ) {
+                if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
+                else Text("Save and Continue")
+            }
         }
     }
 }
@@ -290,7 +337,6 @@ fun AuthScreen(auth: FirebaseAuth, firestore: FirebaseFirestore, onLoginSuccess:
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedTextField(value = password, onValueChange = { password = it; message = "" }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
 
-        // Forgot Password option (Only shown on Login screen)
         if (isLogin) {
             Spacer(modifier = Modifier.height(4.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -303,10 +349,10 @@ fun AuthScreen(auth: FirebaseAuth, firestore: FirebaseFirestore, onLoginSuccess:
                     message = ""
                     auth.sendPasswordResetEmail(email.trim()).addOnCompleteListener { task ->
                         isLoading = false
-                        if (task.isSuccessful) {
-                            message = "Password reset email sent! Check your inbox."
+                        message = if (task.isSuccessful) {
+                            "Password reset email sent! Check your inbox."
                         } else {
-                            message = task.exception?.localizedMessage ?: "Failed to send reset email."
+                            task.exception?.localizedMessage ?: "Failed to send reset email."
                         }
                     }
                 }) {
@@ -318,7 +364,10 @@ fun AuthScreen(auth: FirebaseAuth, firestore: FirebaseFirestore, onLoginSuccess:
         Spacer(modifier = Modifier.height(8.dp))
 
         if (message.isNotEmpty()) {
-            Text(text = message, color = if (message.contains("sent")) Color(0xFF176B55) else MaterialTheme.colorScheme.error)
+            Text(
+                text = message,
+                color = if (message.contains("sent") || message.contains("created")) Color(0xFF176B55) else MaterialTheme.colorScheme.error
+            )
             Spacer(modifier = Modifier.height(12.dp))
         }
 
@@ -331,11 +380,18 @@ fun AuthScreen(auth: FirebaseAuth, firestore: FirebaseFirestore, onLoginSuccess:
                 if (isLogin) {
                     auth.signInWithEmailAndPassword(email.trim(), password).addOnCompleteListener { task ->
                         isLoading = false
-                        if (task.isSuccessful) {
+                        message = if (task.isSuccessful) {
                             val user = auth.currentUser
-                            if (user?.isEmailVerified == true) onLoginSuccess(user)
-                            else { message = "Please verify your email first."; auth.signOut() }
-                        } else message = task.exception?.localizedMessage ?: "Login failed."
+                            if (user?.isEmailVerified == true) {
+                                onLoginSuccess(user)
+                                ""
+                            } else {
+                                auth.signOut()
+                                "Please verify your email first."
+                            }
+                        } else {
+                            task.exception?.localizedMessage ?: "Login failed."
+                        }
                     }
                 } else {
                     auth.createUserWithEmailAndPassword(email.trim(), password).addOnCompleteListener { task ->
@@ -351,7 +407,15 @@ fun AuthScreen(auth: FirebaseAuth, firestore: FirebaseFirestore, onLoginSuccess:
                                     isLogin = true
                                 }
                                 .addOnFailureListener { e -> isLoading = false; message = "Failed: ${e.message}" }
-                        } else { isLoading = false; message = task.exception?.localizedMessage ?: "Registration failed." }
+                        } else {
+                            isLoading = false
+                            val errorMsg = task.exception?.localizedMessage ?: "Registration failed."
+                            message = if (errorMsg.contains("already in use", ignoreCase = true)) {
+                                "This email is already registered. Please log in instead."
+                            } else {
+                                errorMsg
+                            }
+                        }
                     }
                 }
             },
@@ -418,7 +482,11 @@ fun StudentDashboard(currentUser: FirebaseUser, firestore: FirebaseFirestore, on
         if (studentCourse.isNotBlank()) {
             val listener = firestore.collection("Issues")
                 .whereEqualTo("course", studentCourse)
-                .addSnapshotListener { snapshot, _ ->
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e("StudentDashboard", "Listen failed", error)
+                        return@addSnapshotListener
+                    }
                     if (snapshot != null) {
                         issuesList = snapshot.toObjects(Issue::class.java).sortedByDescending { it.timestamp }
                     }
@@ -433,7 +501,7 @@ fun StudentDashboard(currentUser: FirebaseUser, firestore: FirebaseFirestore, on
         topBar = {
             TopAppBar(
                 title = { Text("CampusFix - $studentCourse Portal") },
-                actions = { IconButton(onClick = onLogout) { Icon(Icons.Filled.ExitToApp, contentDescription = "Logout") } }
+                actions = { IconButton(onClick = onLogout) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout") } }
             )
         },
         floatingActionButton = {
@@ -474,7 +542,7 @@ fun StudentDashboard(currentUser: FirebaseUser, firestore: FirebaseFirestore, on
                             Spacer(modifier = Modifier.height(8.dp))
 
                             ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = !categoryExpanded }, modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(value = category, onValueChange = {}, readOnly = true, label = { Text("Category") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
+                                OutlinedTextField(value = category, onValueChange = {}, readOnly = true, label = { Text("Category") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
                                 ExposedDropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
                                     categoryOptions.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { category = option; categoryExpanded = false }) }
                                 }
@@ -522,6 +590,10 @@ fun StudentDashboard(currentUser: FirebaseUser, firestore: FirebaseFirestore, on
                                                 selectedImageUri = null
                                                 showDialog = false
                                             }
+                                            .addOnFailureListener { e ->
+                                                isUploadingImage = false
+                                                Log.e("FirestoreSave", "Failed to save issue: ${e.message}", e)
+                                            }
                                     }
 
                                     if (selectedImageUri != null) {
@@ -530,9 +602,17 @@ fun StudentDashboard(currentUser: FirebaseUser, firestore: FirebaseFirestore, on
                                             .addOnSuccessListener {
                                                 storageRef.downloadUrl.addOnSuccessListener { downloadUri: Uri ->
                                                     saveIssueToFirestore(downloadUri.toString())
+                                                }.addOnFailureListener { e ->
+                                                    Log.e("StorageUpload", "Failed to get download URL: ${e.message}", e)
+                                                    isUploadingImage = false
+                                                    saveIssueToFirestore("")
                                                 }
                                             }
-                                            .addOnFailureListener { saveIssueToFirestore("") }
+                                            .addOnFailureListener { e ->
+                                                Log.e("StorageUpload", "Failed to upload image: ${e.message}", e)
+                                                isUploadingImage = false
+                                                saveIssueToFirestore("")
+                                            }
                                     } else {
                                         saveIssueToFirestore("")
                                     }
@@ -554,13 +634,17 @@ fun StudentDashboard(currentUser: FirebaseUser, firestore: FirebaseFirestore, on
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AdminDashboard(auth: FirebaseAuth, onLogout: () -> Unit) {
+fun AdminDashboard(onLogout: () -> Unit) {
     val firestore = remember { FirebaseFirestore.getInstance() }
     var allIssues by remember { mutableStateOf<List<Issue>>(emptyList()) }
     var selectedFilter by remember { mutableStateOf("All") }
 
     DisposableEffect(Unit) {
-        val listener = firestore.collection("Issues").addSnapshotListener { snapshot, _ ->
+        val listener = firestore.collection("Issues").addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.e("AdminDashboard", "Listen failed", error)
+                return@addSnapshotListener
+            }
             if (snapshot != null) {
                 allIssues = snapshot.toObjects(Issue::class.java).sortedByDescending { it.timestamp }
             }
@@ -579,12 +663,12 @@ fun AdminDashboard(auth: FirebaseAuth, onLogout: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("CampusFix - Admin Dashboard") },
-                actions = { IconButton(onClick = onLogout) { Icon(Icons.Filled.ExitToApp, contentDescription = "Logout") } }
+                actions = { IconButton(onClick = onLogout) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout") } }
             )
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            ScrollableTabRow(
+            PrimaryScrollableTabRow(
                 selectedTabIndex = when (selectedFilter) { "Pending" -> 1; "In Progress" -> 2; "Resolved" -> 3; else -> 0 },
                 edgePadding = 16.dp,
                 modifier = Modifier.fillMaxWidth()
@@ -628,6 +712,7 @@ fun AdminDashboard(auth: FirebaseAuth, onLogout: () -> Unit) {
 @Composable
 fun IssueCard(issue: Issue, isAdmin: Boolean, currentUserId: String, firestore: FirebaseFirestore, onStatusChange: (String) -> Unit) {
     var showHistoryDialog by remember { mutableStateOf(false) }
+    var showImageDialog by remember { mutableStateOf(false) }
     val hasUpvoted = issue.upvotedUserIds.contains(currentUserId)
 
     Card(
@@ -652,7 +737,12 @@ fun IssueCard(issue: Issue, isAdmin: Boolean, currentUserId: String, firestore: 
             Spacer(modifier = Modifier.height(4.dp))
             Text(text = issue.description, color = Color.DarkGray, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(8.dp))
-            Text(text = "Category: ${issue.category} • Course: ${issue.course}", fontSize = 12.sp, color = Color.Gray)
+
+            Text(
+                text = "Category: ${issue.category} | Course: ${issue.course}",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
 
             if (issue.studentName.isNotBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
@@ -660,9 +750,16 @@ fun IssueCard(issue: Issue, isAdmin: Boolean, currentUserId: String, firestore: 
                 Text(text = "Location: ${issue.hostelLocation}", fontSize = 12.sp, color = Color.DarkGray)
             }
 
+            // Photo Evidence Button (renders for both Student and Admin when imageUrl is present)
             if (issue.imageUrl.isNotBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(text = "📷 Photo Evidence Attached", fontSize = 12.sp, color = Color(0xFF0056b3), fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showImageDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF0056b3))
+                ) {
+                    Text(text = "📷 Tap to View Attached Photo Evidence", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -703,6 +800,37 @@ fun IssueCard(issue: Issue, isAdmin: Boolean, currentUserId: String, firestore: 
         }
     }
 
+    // Image Preview Dialog (Accessible to both Student and Admin)
+    if (showImageDialog && issue.imageUrl.isNotBlank()) {
+        AlertDialog(
+            onDismissRequest = { showImageDialog = false },
+            title = { Text("Photo Evidence") },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = issue.imageUrl,
+                        contentDescription = "Issue Photo Evidence",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showImageDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF176B55))
+                ) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // History Log Dialog
     if (showHistoryDialog) {
         AlertDialog(
             onDismissRequest = { showHistoryDialog = false },
