@@ -7,17 +7,23 @@ CampusFix is a modern, real-time Android application built with Kotlin, Jetpack 
 ## Key Features
 
 **Secure Authentication:** Complete Firebase Authentication workflow supporting user registration, secure login, and password reset.
+
 **User Profile Setup:** Dedicated profile configuration capturing academic details, hostel information, and course mapping.
+
 **Student Dashboard & Issue Reporting:**
   Report campus issues across multiple categories.
   Attach photo evidence directly captured or selected from device storage, synced via Firebase Storage.
   Track personal issue history logs and status updates.
+  
 **Issue Engagement (Me Too Upvoting):** Allows students to upvote existing reported issues to highlight high-priority campus problems.
+
 **Admin Dashboard:** 
   Campus-wide visibility of all submitted issues.
   Advanced status filtering (Pending, In Progress, Resolved).
   Direct status updates and review capabilities.
+  
 **Real-Time Sync:** Instant UI updates across clients powered by Cloud Firestore real-time snapshot listeners.
+
 **Modern Native UI:** Built entirely with Jetpack Compose and Material 3 components for a responsive and clean user interface.
 
 ---
