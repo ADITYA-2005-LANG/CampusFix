@@ -37,7 +37,16 @@ CampusFix is a modern, real-time Android application built with Kotlin, Jetpack 
 **Authentication:** Firebase Auth
 **Architecture:** MVVM (Model-View-ViewModel)
 
----
+##Building from the Source
+**1.Clone the Repository**
+git clone https://github.com/ADITYA-2005-LANG/CampusFix.git
+
+**2.Open the project in Android Studio**
+
+**3.Place the google.services.json file inside the app/directory**
+
+**4.Sync Gradle and run the app on an emulator or physical device.**
+
 You can download the apk from the link given below:
 https://drive.google.com/file/d/1PGMht9pY41GQ_ZNz7hyBJOUuens7QYvx/view?usp=sharing
 
