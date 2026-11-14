@@ -52,4 +52,5 @@ You can download the apk from the link given below:
 https://drive.google.com/file/d/1PGMht9pY41GQ_ZNz7hyBJOUuens7QYvx/view?usp=sharing
 
 Note- For admin accounts, we need to separately go to the Firebase Console and change the role of account from Student to Admin. All newly created accounts have the default role as "Student".
+For admin accounts, navigate to the Firebase Console -> Firestore Database and manually change the role field of the target user document from "Student" to "Admin". All newly created accounts default to "Student".
 
