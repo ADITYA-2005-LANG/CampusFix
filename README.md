@@ -31,11 +31,17 @@ CampusFix is a modern, real-time Android application built with Kotlin, Jetpack 
 ## Tech Stack & Libraries
 
 **Language:** Kotlin
+
 **UI Toolkit:** Jetpack Compose, Material 3
+
 **Backend & Database:** Cloud Firestore (Metadata, User Profiles, and Issue tracking)
+
 **Storage:** Firebase Storage (`/issue_images/`)
+
 **Authentication:** Firebase Auth
+
 **Architecture:** MVVM (Model-View-ViewModel)
+
 
 ## Building from the Source
 
